@@ -265,6 +265,7 @@ class MOLNSController(MOLNSbase):
             raise MOLNSException("USAGE: molns cluser delete name")
         config.delete_object(name=args[0], kind='Controller')
 
+
     @classmethod
     def ssh_controller(cls, args, config):
         """ SSH into the controller. """
@@ -455,6 +456,34 @@ class MOLNSController(MOLNSbase):
                     if status == controller_obj.STATUS_RUNNING:
                         print "Stopping controller running at {0}".format(i.ip_address)
                         controller_obj.stop_instance(i)
+                else:
+                    worker_name = config.get_object_by_id(i.worker_group_id, 'WorkerGroup').name
+                    worker_obj = cls._get_workerobj([worker_name], config)
+                    status = worker_obj.get_instance_status(i)
+                    if status == worker_obj.STATUS_RUNNING or status == worker_obj.STATUS_STOPPED:
+                        print "Terminating worker '{1}' running at {0}".format(i.ip_address, worker_name)
+                        worker_obj.terminate_instance(i)
+    
+        else:
+            print "No instance running for this controller"
+
+    #anga code part 1
+    @classmethod
+    def restart_controller(cls, args, config):
+        """ Restart MOLNs controller. """
+        logging.debug("MOLNSController.restart_controller(args={0})".format(args))
+        controller_obj = cls._get_controllerobj(args, config)
+        if controller_obj is None: return
+        # Check if any instances are assigned to this controller
+        instance_list = config.get_all_instances(controller_id=controller_obj.id)
+        # Check if they are running
+        if len(instance_list) > 0:
+            for i in instance_list:
+                if i.worker_group_id is None:
+                    status = controller_obj.get_instance_status(i)
+                    if status == controller_obj.STATUS_RUNNING:
+                        print "Restart controller running at {0}".format(i.ip_address)
+                        controller_obj.restart_instance(i)
                 else:
                     worker_name = config.get_object_by_id(i.worker_group_id, 'WorkerGroup').name
                     worker_obj = cls._get_workerobj([worker_name], config)
@@ -1399,6 +1428,8 @@ COMMAND_LIST = [
         #    function=MOLNSController.connect_controller_to_local),
         # Commands to interact with controller
         SubCommand('controller',[
+            Command('restart', {'name':None}, #anga code part 2
+                function=MOLNSController.restart_controller), #anga code part 3
             Command('setup', {'name':None},
                 function=MOLNSController.setup_controller),
             Command('list', {'name':None},

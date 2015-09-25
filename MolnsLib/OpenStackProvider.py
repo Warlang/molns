@@ -185,6 +185,7 @@ class OpenStackProvider(OpenStackBase):
                 logging.error("Error deleteing floating IP: {0}".format(e))
         return image_id
 
+
     def _connect(self):
         if self.connected: return
         creds = {}
@@ -215,6 +216,15 @@ class OpenStackProvider(OpenStackBase):
         for instance_id in instance_ids:
             instances.append(self.nova.servers.get(instance_id))
         self._stop_vm(instances)
+
+    #anga code part 2
+    def _restart_instances(self, instance_ids):
+        self._connect()
+        instances = []
+        for instance_id in instance_ids:
+            instances.append(self.nova.servers.get(instance_id))
+        self._restart_vm(instances)
+
 
     def _resume_instances(self, instance_ids):
         self._connect()
@@ -292,6 +302,33 @@ class OpenStackProvider(OpenStackBase):
             logging.exception(e)
             raise ProviderException("Failed to stop vm(s)\n{0}".format(e))
 
+    #anga code part 3
+    def _restart_vm(self, instances):
+        self._connect()
+        if not isinstance(instances, list):
+            instances = [instances]
+        try:
+            for instance in instances:
+                instance.reboot('SOFT') #reboot(reboot_type='SOFT') -software| reboot(reboot_type='HARD') -powercycle
+            inst_to_check = instances
+            while len(inst_to_check) > 0:
+                time.sleep(5)
+                inst_still_restarting = []
+                for instance in inst_to_check:
+                    # Retrieve the instance again so the status field updates
+                    try:
+                        instance = self.nova.servers.get(instance.id)
+                        logging.debug("Stopping node, status '{0}'  [{1}]".format(instance.status, instance.id))
+                        if instance.status != 'ACTIVE':
+                            inst_still_restarting.append(instance)
+                    except novaclient.exceptions.NotFound as e:
+                        pass
+                inst_to_check = inst_still_restarting
+        except Exception as e:
+            logging.exception(e)
+            raise ProviderException("Failed to stop vm(s)\n{0}".format(e))
+    
+
     def _boot_ubuntu_vm(self):
         instance_type = self.config["default_instance_type"]
         return self.__boot_vm(self.config["ubuntu_image_name"], instance_type=instance_type)
@@ -353,9 +390,24 @@ class OpenStackProvider(OpenStackBase):
     def _attach_floating_ip(self, instance):
        # Try to attach a floating IP to the controller
         logging.info("Attaching floating ip to the server...")
+
+        #anga bugfix
+        #Not 100% safe. If 2 instances use the same IP at the same time one of them will fail to allocate it.
+        #This can be avoided but I don't see the reason to spend time to check it before I allocate to make sure no one done it already. 
+        floating_ip_pool = self.nova.floating_ips.list()
+        floating_ip = None
+
+        #Find a free floating IP
+        for n in floating_ip_pool:
+            if n.instance_id == None:
+                floating_ip = n
+                break        
         try:
-            floating_ip = self.nova.floating_ips.create(self.config['floating_ip_pool'])
-            instance.add_floating_ip(floating_ip)
+            if (floating_ip != None):
+                instance.add_floating_ip(floating_ip)
+            else:
+                floating_ip = self.nova.floating_ips.create(self.config['floating_ip_pool'])
+                instance.add_floating_ip(floating_ip)
             logging.debug("ip={0}".format(floating_ip.ip))
             return floating_ip.ip
         except Exception as e:
@@ -403,6 +455,14 @@ class OpenStackController(OpenStackBase):
         else:
             self.provider._stop_instances([instances.provider_instance_identifier])
 
+    #anga code part 1
+    def restart_instance(self, instances):
+        if isinstance(instances, list):
+            pids = [x.provider_instance_identifier for x in instances]
+            self.provider._restart_instances(pids)
+        else:
+            self.provider._restart_instances([instances.provider_instance_identifier])
+
     def terminate_instance(self, instances):
         if isinstance(instances, list):
             pids = []
@@ -428,6 +488,7 @@ class OpenStackController(OpenStackBase):
         if status == 'DELETED':
             return self.STATUS_TERMINATED
         raise ProviderException("OpenStackController.get_instance_status() got unknown status '{0}'".format(status))
+
 
 
 ##########################################
